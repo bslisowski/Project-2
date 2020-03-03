@@ -30,7 +30,8 @@
 //global variables
 char path[50][50];
 char pwd[100];
-
+char shellpath[100];
+int pathsize = 1;
 /*
   This struct holds the parsed command line.
   out, out1, in, and pipe:
@@ -58,11 +59,11 @@ void parse(char *, command *);
 void handlebuiltin(command);
 void cd(command);
 void dir(command);
-//void environ(command);
-//void path(command);
-//void echo(command);
-//void help(command);
-//void pause(command);
+void environ(command);
+void changepath(command);
+void echo(command);
+void help(command);
+void pauseshell(command);
 
 int main(int argc, char *argv[]){
 
@@ -70,7 +71,7 @@ int main(int argc, char *argv[]){
   strcpy(path[0], "/bin");
   strcpy(path[1], "\0");
   getcwd(pwd, 100);
-
+  getcwd(shellpath, 100);
   //defining and initializing the command struct
   command cmd;
   initstruct(&cmd);
@@ -106,12 +107,14 @@ int main(int argc, char *argv[]){
     }
     else getline(&line, &size, stdin);
 
-    parse(line, &cmd);
-
-    //handle parsed command
-    if (cmd.builtin){
-      handlebuiltin(cmd);
+    if (strcmp(line, "\n") != 0){
+      parse(line, &cmd);
+      //handle parsed command
+      if (cmd.builtin){
+        handlebuiltin(cmd);
+      }
     }
+
 
     initstruct(&cmd);
   }
@@ -217,6 +220,7 @@ void parse(char *line, command *cmd){
   }
   free(buffer);
 }
+
 /*
   function to handle built-in commands
   contains only if/else statements to handle the different commands
@@ -249,16 +253,16 @@ void handlebuiltin(command cmd){
     environ(cmd);
   }
   else if (strcmp(cmd.args[0], PATH) == 0){
-    cmd.builtin = 1;
+    changepath(cmd);
   }
   else if (strcmp(cmd.args[0], ECHO) == 0){
-    cmd.builtin = 1;
+    echo(cmd);
   }
   else if (strcmp(cmd.args[0], HELP) == 0){
-    cmd.builtin = 1;
+    help(cmd);
   }
   else if (strcmp(cmd.args[0], PAUSE) == 0){
-    cmd.builtin = 1;
+    pauseshell(cmd);
   }
   else if (strcmp(cmd.args[0], QUIT) == 0){
     //exit is handled here - no seperate function needed
@@ -334,8 +338,7 @@ void dir(command cmd){
     FILE *file = fopen(cmd.args[cmd.out], "w");
 
     while (read != NULL){
-      fprintf(file, read->d_name);
-      fprintf(file, "\n");
+      fprintf(file, "%s\n", read->d_name);
       read = readdir(dir);
     }
     fclose(file);
@@ -344,8 +347,7 @@ void dir(command cmd){
     FILE *file = fopen(cmd.args[cmd.out1], "a");
 
     while (read != NULL){
-      fprintf(file, read->d_name);
-      fprintf(file, "\n");
+      fprintf(file, "%s\n", read->d_name);
       read = readdir(dir);
     }
     fclose(file);
@@ -362,47 +364,190 @@ void dir(command cmd){
 /*
   function for the environ command
   can be used with output redirection
-
+*/
 void environ(command cmd){
 
   if (cmd.argcount > 1){
     error();
   }
   else if (cmd.argcount == 1){
+    FILE *fp;
     //redirection
     if (cmd.out){
       //truncate
+      fp = fopen(cmd.args[cmd.out], "w");
     }
     else{
       //append
+      fp = fopen(cmd.args[cmd.out1], "a");
     }
+
+    if (fp == NULL){
+      error();
+    }
+    fprintf(fp, "PATH=%s", path[0]);
+    int i = 1;
+    while(i < pathsize){
+      fprintf(fp, ":%s", path[i++]);
+    }
+    fprintf(fp, "\nshell=%s/myshell\n", shellpath);
+    fprintf(fp, "PWD=%s\n", pwd);
+    fprintf(fp, "USER=%s\n", getenv("USER"));
+    fprintf(fp, "HOME=%s\n", getenv("HOME"));
+    fclose(fp);
   }
   else{
     //no redirection
     printf("PATH=%s", path[0]);
     int i = 1;
-    while(path[i] != "\0"){
+    while(i < pathsize){
       printf(":%s", path[i++]);
     }
-    printf("\nPWD=%s\n", pwd);
+    printf("\nshell=%s/myshell\n", shellpath);
+    printf("PWD=%s\n", pwd);
     printf("USER=%s\n", getenv("USER"));
     printf("HOME=%s\n", getenv("HOME"));
   }
 }
-*/
+
 
 /*
-  void path(command cmd)
+  function for user to change the path
 */
+void changepath(command cmd){
+  //if no arguments are passed, the path is set to NULL
+  if (cmd.argcount == 0){
+    strcpy(path[0], "\0");
+    return;
+  }
+
+  int i = 1;
+  /*
+    this loop uses opendir() to check if the arguments given are
+    existing directories
+  */
+  while (i <= cmd.argcount){
+    DIR *dir = opendir(cmd.args[i]);
+    if (dir == NULL){
+      error();
+      return;
+    }
+    strcpy(path[i-1], cmd.args[i]);
+    i++;
+    closedir(dir);
+  }
+  strcpy(path[i-1], "\0");
+}
+
+
 /*
-  void echo(command cmd)
+  function for the echo command
+  can be used with output redirection
 */
+void echo(command cmd){
+  if (cmd.argcount == 0 || cmd.argcount > 2){
+    error();
+    return;
+  }
+
+  if (cmd.out || cmd.out1){
+    FILE *fp;
+    if (cmd.out){
+      fp = fopen(cmd.args[cmd.out], "w");
+    }
+    else{
+      fp = fopen(cmd.args[cmd.out1], "a");
+    }
+
+    if (fp == NULL){
+      error();
+      return;
+    }
+    fprintf(fp, "%s\n", cmd.args[1]);
+    fclose(fp);
+  }
+  else {
+    printf("%s\n", cmd.args[1]);
+  }
+}
+
+
 /*
-  void help(command cmd)
+  function for the help command
+  prints out the manual
+  can be used with output redirection
 */
+void help(command cmd){
+  //the only argument allowed is redirection
+  if (cmd.argcount > 1){
+    error();
+    return;
+  }
+
+  char *line = NULL;
+  size_t size = 100;
+  FILE *manual = fopen("readme", "r");
+  if (manual == NULL){
+    error();
+    return;
+  }
+  getline(&line, &size, manual);
+
+  if (cmd.out || cmd.out1){
+    FILE *fp;
+    if (cmd.out){
+      fp = fopen(cmd.args[cmd.out], "w");
+    }
+    else{
+      fp = fopen(cmd.args[cmd.out1], "a");
+    }
+
+    if (fp == NULL){
+      error();
+      return;
+    }
+    fprintf(fp, "%s", line);
+    while(getline(&line, &size, manual) != -1){
+      fprintf(fp, "%s", line);
+    }
+    fclose(fp);
+  }
+  else{
+    printf("%s", line);
+    while(getline(&line, &size, manual) != -1){
+      printf("%s", line);
+    }
+  }
+  fclose(manual);
+}
+
+
 /*
-  void pause(command cmd)
+  function for the pause command
+  waits for the user to press enter only
 */
+void pauseshell(command cmd){
+  if (cmd.argcount){
+    error();
+    return;
+  }
+  printf("press enter to continue\n");
+  char c;
+  int i;
+  /*
+    This loop checks the user input with getchar.
+    If anything other than enter is input, the loop will continue.
+    The loop will exit and unpause the shell when only enter is pressed.
+  */
+  do {
+    fflush(stdin);
+    i = 0;
+    while ((c = getchar()) != '\n'){
+      i++;
+    }
+  } while (i);
+}
+
 
 /*
   function to handle other commands
