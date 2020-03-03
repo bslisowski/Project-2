@@ -9,6 +9,8 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <string.h>
+#include <dirent.h>
+#include <sys/types.h>
 
 //built-in command functions
 //other command function
@@ -16,7 +18,7 @@
 //defining the built-in functions
 #define CD "cd"
 #define CLR "clr"
-#define DIR "dir"
+#define DR "dir"
 #define ENVIRON "environ"
 #define ECHO "echo"
 #define PATH "path"
@@ -53,6 +55,14 @@ typedef struct{
 void error();
 void initstruct(command *);
 void parse(char *, command *);
+void handlebuiltin(command);
+void cd(command);
+void dir(command);
+//void environ(command);
+//void path(command);
+//void echo(command);
+//void help(command);
+//void pause(command);
 
 int main(int argc, char *argv[]){
 
@@ -97,8 +107,11 @@ int main(int argc, char *argv[]){
     else getline(&line, &size, stdin);
 
     parse(line, &cmd);
-    printf("argcount = %d\n", cmd.argcount);
+
     //handle parsed command
+    if (cmd.builtin){
+      handlebuiltin(cmd);
+    }
 
     initstruct(&cmd);
   }
@@ -109,7 +122,7 @@ int main(int argc, char *argv[]){
 
 //function for errors;
 void error(){
-  char *error_msg = "an error has occured";
+  char *error_msg = "an error has occured\n";
   write(STDERR_FILENO, error_msg, strlen(error_msg));
 }
 //function to set the struct's int variables to 0
@@ -140,10 +153,9 @@ void parse(char *line, command *cmd){
     cmd->builtin = 1;
   }
   else if (strcmp(buffer, CLR) == 0){
-    printf("\033[H\033[J");
-    return;
+    cmd->builtin = 1;
   }
-  else if (strcmp(buffer, DIR) == 0){
+  else if (strcmp(buffer, DR) == 0){
     cmd->builtin = 1;
   }
   else if (strcmp(buffer, ENVIRON) == 0){
@@ -181,7 +193,9 @@ void parse(char *line, command *cmd){
         if (buffer[1] == '>'){
           cmd->out1 = i;
         }
-        else cmd->out = i;
+        else{
+          cmd->out = i;
+        }
         break;
       case '<':
         cmd->in = i-1;
@@ -203,3 +217,196 @@ void parse(char *line, command *cmd){
   }
   free(buffer);
 }
+/*
+  function to handle built-in commands
+  contains only if/else statements to handle the different commands
+*/
+void handlebuiltin(command cmd){
+
+  if (strcmp(cmd.args[0], CD) == 0){
+    //cd can have at most one argument
+    if (cmd.argcount > 1){
+      error();
+    }
+    else{
+        cd(cmd);
+    }
+  }
+  else if (strcmp(cmd.args[0], CLR) == 0){
+    //clr is handled here - no seperate function needed
+    if (cmd.argcount > 0){
+      error();
+    }
+    else{
+      printf("\033[H\033[J");
+    }
+    return;
+  }
+  else if (strcmp(cmd.args[0], DR) == 0){
+    dir(cmd);
+  }
+  else if (strcmp(cmd.args[0], ENVIRON) == 0){
+    environ(cmd);
+  }
+  else if (strcmp(cmd.args[0], PATH) == 0){
+    cmd.builtin = 1;
+  }
+  else if (strcmp(cmd.args[0], ECHO) == 0){
+    cmd.builtin = 1;
+  }
+  else if (strcmp(cmd.args[0], HELP) == 0){
+    cmd.builtin = 1;
+  }
+  else if (strcmp(cmd.args[0], PAUSE) == 0){
+    cmd.builtin = 1;
+  }
+  else if (strcmp(cmd.args[0], QUIT) == 0){
+    //exit is handled here - no seperate function needed
+    if (cmd.argcount > 0){
+      error();
+    }
+    else{
+      exit(0);
+    }
+  }
+  else{
+    error();
+  }
+}
+
+/*
+  function for the change directory command
+  if there are no arguments, the pwd is printed
+  else chdir() is called. on success, the new pwd is printed
+  otherwise the error() function is called
+*/
+void cd(command cmd){
+
+  if (cmd.argcount == 0){
+    printf("%s\n", pwd);
+  }
+  else {
+    if (chdir(cmd.args[1]) == -1){
+      error();
+    }
+    else {
+      getcwd(pwd, 100);
+      printf("%s\n", pwd);
+    }
+  }
+}
+
+/*
+  function for the directory command
+  can be used with output redirection
+*/
+void dir(command cmd){
+
+  DIR *dir;
+  struct dirent *read;
+  if (cmd.argcount > 2){
+    error();
+    return;
+  }
+  //opening the the current directory if no argument given
+  if (cmd.argcount == 0){
+    dir = opendir(pwd);
+  }
+  else if ((cmd.argcount == 1)&&((cmd.out)||(cmd.out1))){
+    dir = opendir(pwd);
+  }
+  else{
+  //opening the given directory
+    dir = opendir(cmd.args[1]);
+    if (dir == NULL){
+      error();
+      return;
+    }
+  }
+
+  read = readdir(dir);
+
+  /*
+    Checking to see if redirrection is needed and printing the
+    contents of the directory appropriately
+  */
+  if (cmd.out){
+    FILE *file = fopen(cmd.args[cmd.out], "w");
+
+    while (read != NULL){
+      fprintf(file, read->d_name);
+      fprintf(file, "\n");
+      read = readdir(dir);
+    }
+    fclose(file);
+  }
+  else if (cmd.out1){
+    FILE *file = fopen(cmd.args[cmd.out1], "a");
+
+    while (read != NULL){
+      fprintf(file, read->d_name);
+      fprintf(file, "\n");
+      read = readdir(dir);
+    }
+    fclose(file);
+  }
+  else {
+      while (read != NULL){
+        printf("%s\n", read->d_name);
+        read = readdir(dir);
+      }
+  }
+  closedir(dir);
+}
+
+/*
+  function for the environ command
+  can be used with output redirection
+
+void environ(command cmd){
+
+  if (cmd.argcount > 1){
+    error();
+  }
+  else if (cmd.argcount == 1){
+    //redirection
+    if (cmd.out){
+      //truncate
+    }
+    else{
+      //append
+    }
+  }
+  else{
+    //no redirection
+    printf("PATH=%s", path[0]);
+    int i = 1;
+    while(path[i] != "\0"){
+      printf(":%s", path[i++]);
+    }
+    printf("\nPWD=%s\n", pwd);
+    printf("USER=%s\n", getenv("USER"));
+    printf("HOME=%s\n", getenv("HOME"));
+  }
+}
+*/
+
+/*
+  void path(command cmd)
+*/
+/*
+  void echo(command cmd)
+*/
+/*
+  void help(command cmd)
+*/
+/*
+  void pause(command cmd)
+*/
+
+/*
+  function to handle other commands
+
+void handleother(command *cmd){
+
+}*/
