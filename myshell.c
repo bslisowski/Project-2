@@ -1,7 +1,7 @@
 /*
   Brendan Lisowski
   CIS 3207 - Project 2
-  02/26/2020
+  03/03/2020
 */
 
 
@@ -11,6 +11,7 @@
 #include <string.h>
 #include <dirent.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 
 //built-in command functions
 //other command function
@@ -44,7 +45,7 @@ int pathsize = 1;
 */
 typedef struct{
   int builtin;            //1 if the command is built-in
-  char args[50][20];      //hold the arguments for a command
+  char args[50][50];      //hold the arguments for a command
   int argcount;
   int out;                // >
   int out1;               // >>
@@ -64,6 +65,7 @@ void changepath(command);
 void echo(command);
 void help(command);
 void pauseshell(command);
+void handleother(command);
 
 int main(int argc, char *argv[]){
 
@@ -105,7 +107,10 @@ int main(int argc, char *argv[]){
         break;
       }
     }
-    else getline(&line, &size, stdin);
+    else {
+      fflush(stdin);
+      getline(&line, &size, stdin);
+    }
 
     if (strcmp(line, "\n") != 0){
       parse(line, &cmd);
@@ -113,8 +118,10 @@ int main(int argc, char *argv[]){
       if (cmd.builtin){
         handlebuiltin(cmd);
       }
+      else {
+        handleother(cmd);
+      }
     }
-
 
     initstruct(&cmd);
   }
@@ -128,6 +135,7 @@ void error(){
   char *error_msg = "an error has occured\n";
   write(STDERR_FILENO, error_msg, strlen(error_msg));
 }
+
 //function to set the struct's int variables to 0
 void initstruct(command *cmd){
   cmd->builtin = 0;
@@ -138,6 +146,7 @@ void initstruct(command *cmd){
   cmd->pipe = 0;
   cmd->backexec = 0;
 }
+
 /*
   Function for parsing the command line input
 
@@ -183,7 +192,7 @@ void parse(char *line, command *cmd){
     cmd->builtin = 0;
   }
   //storing the command in the argument array
-  strcpy(cmd->args[0], buffer);
+  strncpy(cmd->args[0], buffer, 50);
 
   int i = 1;
   /*
@@ -214,7 +223,7 @@ void parse(char *line, command *cmd){
       case '\n':
         break;
       default:
-        strcpy(cmd->args[i++], buffer);
+        strncpy(cmd->args[i++], buffer, 50);
         cmd->argcount++;
     }
   }
@@ -418,6 +427,7 @@ void changepath(command cmd){
   //if no arguments are passed, the path is set to NULL
   if (cmd.argcount == 0){
     strcpy(path[0], "\0");
+    strcpy(path[1], "\0");
     return;
   }
 
@@ -551,7 +561,96 @@ void pauseshell(command cmd){
 
 /*
   function to handle other commands
+*/
+void handleother(command cmd){
 
-void handleother(command *cmd){
+  //if the user erased the path, only builtin commands can be used
+  if (strcmp(path[0], "\0") == 0){
+    error();
+    return;
+  }
 
-}*/
+  char *checkpath = (char *)malloc(100);
+  int i = 0;
+  //pathfound is to indicate if the file was found in one of the path strings
+  int pathfound = 0;
+  while(i < pathsize){
+    strcat(checkpath, path[i]);
+    strcat(checkpath, cmd.args[0]);
+    if (access(checkpath, X_OK) == 0){
+      pathfound = 1;
+      break;
+    }
+    else{
+      strncpy(checkpath, "", 100);
+      i++;
+    }
+  }
+
+  /*
+    If the command is not found in the path, this will check
+    the current directory.
+  */
+  if (!pathfound){
+    strncpy(checkpath, "", 100);
+    strcat(checkpath, cmd.args[0]);
+
+    if(access(checkpath, X_OK) != 0){
+      error();
+      return;
+    }
+  }
+
+  //this is for any arguments needed for the new process
+  char **arguments = (char **)calloc(100, sizeof(char *));
+  i = 0;
+  while (i < 100){
+    arguments[i] = (char *)calloc(100, sizeof(char));
+    i++;
+  }
+
+  i = 1;
+  if (cmd.argcount){
+    while(i <= cmd.argcount){
+      strncpy(arguments[i-1], cmd.args[i], 100);
+      i++;
+    }
+    strcpy(arguments[i-1], "\0");
+  }
+  else{
+    strcpy(arguments[0], "\0");
+  }
+
+
+  //creating the new process
+  int pid = fork();
+
+  if (pid == -1){
+    error();
+    free(checkpath);
+    free(arguments);
+    return;
+  }
+  else if (pid == 0){
+    int execsucc = 0;
+    if (cmd.argcount){
+      execsucc = execv(checkpath, arguments);
+    }
+    else{
+      execsucc = execv(checkpath, NULL);
+    }
+    if (execsucc == -1){
+      error();
+      free(checkpath);
+      free(arguments);
+      return;
+    }
+  }
+  else{
+    if (cmd.backexec == 0){
+      wait(&pid);
+    }
+  }
+  free(checkpath);
+  free(arguments);
+}
