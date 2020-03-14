@@ -1,7 +1,7 @@
 /*
   Brendan Lisowski
   CIS 3207 - Project 2
-  03/03/2020
+  03/14/2020
 */
 
 
@@ -12,6 +12,8 @@
 #include <dirent.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
 //built-in command functions
 //other command function
@@ -50,7 +52,7 @@ typedef struct{
   int out;                // >
   int out1;               // >>
   int in;                 // <
-  int pipe;               // |
+  int pipe;               //amount of pipes
   int backexec;           //1 if the command should be executed in the background
 }command;
 
@@ -66,6 +68,7 @@ void echo(command);
 void help(command);
 void pauseshell(command);
 void handleother(command);
+void handlepipe(char args[50][50], int, int);
 
 int main(int argc, char *argv[]){
 
@@ -100,6 +103,7 @@ int main(int argc, char *argv[]){
   char *line = (char *)malloc(size*sizeof(char));
 
   while(1){
+
     printf("myshell> ");
 
     if (batchmode){
@@ -109,13 +113,17 @@ int main(int argc, char *argv[]){
     }
     else {
       fflush(stdin);
+      fflush(stdin);
       getline(&line, &size, stdin);
     }
 
     if (strcmp(line, "\n") != 0){
       parse(line, &cmd);
       //handle parsed command
-      if (cmd.builtin){
+      if(cmd.builtin == -1){
+        error();
+      }
+      else if (cmd.builtin){
         handlebuiltin(cmd);
       }
       else {
@@ -202,21 +210,41 @@ void parse(char *line, command *cmd){
 
     switch (buffer[0]){
       case '>':
-        if (buffer[1] == '>'){
+        if (buffer[0] == '>'){
           cmd->out1 = i;
+          if (buffer[1] != '\0'){
+            cmd->builtin = -1;
+          }
         }
         else{
           cmd->out = i;
+          if (buffer[2] != '\0'){
+            cmd->builtin = -1;
+          }
         }
         break;
       case '<':
-        cmd->in = i-1;
+        cmd->in = i;
+        if (buffer[1] != '\0'){
+          cmd->builtin = -1;
+          return;
+        }
         break;
       case '|':
-        cmd->pipe = i;
+        cmd->pipe++;
+        strncpy(cmd->args[i++], buffer, 50);
+        cmd->argcount++;
+        if (buffer[1] != '\0'){
+          cmd->builtin = -1;
+          return;
+        }
         break;
       case '&':
         cmd->backexec = 1;
+        if (buffer[1] != '\0'){
+          cmd->builtin = -1;
+          return;
+        }
         break;
       case '\t':
         break;
@@ -419,7 +447,6 @@ void environ(command cmd){
   }
 }
 
-
 /*
   function for user to change the path
 */
@@ -430,6 +457,7 @@ void changepath(command cmd){
     strcpy(path[1], "\0");
     return;
   }
+  printf("argcount = %d\n", cmd.argcount);
 
   int i = 1;
   /*
@@ -442,13 +470,13 @@ void changepath(command cmd){
       error();
       return;
     }
-    strcpy(path[i-1], cmd.args[i]);
+    strncpy(path[i-1], cmd.args[i], 50);
     i++;
+    pathsize++;
     closedir(dir);
   }
   strcpy(path[i-1], "\0");
 }
-
 
 /*
   function for the echo command
@@ -480,7 +508,6 @@ void echo(command cmd){
     printf("%s\n", cmd.args[1]);
   }
 }
-
 
 /*
   function for the help command
@@ -531,7 +558,6 @@ void help(command cmd){
   fclose(manual);
 }
 
-
 /*
   function for the pause command
   waits for the user to press enter only
@@ -558,7 +584,6 @@ void pauseshell(command cmd){
   } while (i);
 }
 
-
 /*
   function to handle other commands
 */
@@ -569,10 +594,17 @@ void handleother(command cmd){
     error();
     return;
   }
-
+  if (cmd.pipe > 0){
+    handlepipe(cmd.args, cmd.argcount, cmd.pipe);
+    return;
+  }
   char *checkpath = (char *)malloc(100);
   int i = 0;
-  //pathfound is to indicate if the file was found in one of the path strings
+  /*
+    This loop checks the environment paths for the command the user wants
+    to run. The pathfound variable is set to 1 if the command is found in one
+    of the path directories.
+  */
   int pathfound = 0;
   while(i < pathsize){
     strcat(checkpath, path[i]);
@@ -610,10 +642,15 @@ void handleother(command cmd){
   }
 
   i = 1;
+  int j = 0;
   if (cmd.argcount){
     while(i <= cmd.argcount){
-      strncpy(arguments[i-1], cmd.args[i], 100);
+      if (i == cmd.out || i == cmd.out1 || i == cmd.in){
+        break;
+      }
+      strncpy(arguments[j], cmd.args[i], 100);
       i++;
+      j++;
     }
     strcpy(arguments[i-1], "\0");
   }
@@ -623,7 +660,7 @@ void handleother(command cmd){
 
 
   //creating the new process
-  int pid = fork();
+  pid_t pid = fork();
 
   if (pid == -1){
     error();
@@ -632,19 +669,51 @@ void handleother(command cmd){
     return;
   }
   else if (pid == 0){
-    int execsucc = 0;
+    //Changing the child process' file descriptor for redirection
+    if (cmd.in){
+      int fd = open(cmd.args[cmd.in], O_RDONLY, S_IRUSR);
+      if (fd < 0){
+        error();
+        exit(1);
+      }
+      if (dup2(fd, 0) < 0){
+        error();
+        exit(1);
+      }
+    }
+    if (cmd.out){
+      int fd = open(cmd.args[cmd.out], O_WRONLY | O_CREAT, S_IWUSR);
+      if (fd < 0){
+        error();
+        exit(1);
+      }
+      if (dup2(fd, 1) < 0){
+        error();
+        exit(1);
+      }
+    }
+    else if (cmd.out1){
+      int fd = open(cmd.args[cmd.out1], O_WRONLY | O_APPEND, S_IWUSR);
+      if (fd < 0){
+        error();
+        exit(1);
+      }
+      if (dup2(fd, 1) < 0){
+        error();
+        exit(1);
+      }
+    }
     if (cmd.argcount){
-      execsucc = execv(checkpath, arguments);
+      execv(checkpath, arguments);
+      error();
     }
     else{
-      execsucc = execv(checkpath, NULL);
-    }
-    if (execsucc == -1){
+      execv(checkpath, NULL);
       error();
-      free(checkpath);
-      free(arguments);
-      return;
     }
+    free(checkpath);
+    free(arguments);
+    exit(1);
   }
   else{
     if (cmd.backexec == 0){
@@ -653,4 +722,145 @@ void handleother(command cmd){
   }
   free(checkpath);
   free(arguments);
+  i = 0;
+  while (i < 100){
+    free(arguments[i]);
+    i++;
+  }
+}
+
+/*
+  Function for piping commands.
+  This function only needs the parsed command and the number
+  of pipes (cmd.pipe);
+*/
+void handlepipe(char args[50][50], int argc, int n){
+
+  if (!n){
+    error();
+    return;
+  }
+
+  //3D char array to hold each commands' arguments
+  char arguments[n+1][50][50];
+
+  int i = 0, j = 0, k = 0;
+  int index = 0;
+  //This loop takes the string of commands and arguments and places them in the proper arrays
+  while (index <= argc){
+    if (strcmp("|", args[i]) == 0){
+      if (strcmp("\0", args[i+1]) == 0){
+        error();
+        return;
+      }
+      i++;
+      j++;
+      k = 0;
+    }
+    else{
+      strncpy(arguments[j][k], args[i], 50);
+      i++;
+      k++;
+    }
+    index++;
+  }
+
+
+  i = 0;
+  int nextread;         //integer for the
+  pid_t pid;
+  int fd[2];
+
+  pipe(fd);             //creating the first pipe
+
+  pid = fork();         //creating the first child process
+
+  if (pid == -1){
+    error();
+    return;
+  }
+
+  if (pid == 0){
+    //closing the stdout file descriptor
+    close(1);
+    //redirecting stdout to the write end of the first pipe
+    if (dup2(fd[1], 1) == -1){
+      error();
+      return;
+    }
+    //closing the other connections to the pipe
+    close(fd[0]);
+    close(fd[1]);
+    //executing the first command
+    if (execv(arguments[0][0], NULL) == -1){
+      error();
+      exit(1);
+    }
+  }
+
+  while (i < n){
+    //Saving the stdin file desctriptor before creating the next pipe
+    nextread = fd[0];
+
+    pipe(fd);
+
+    //creating the next child process
+    pid = fork();
+
+    if (pid == -1){
+      error();
+      return;
+    }
+    //changing the next childs file descriptors and calling execv()
+    if (pid == 0){
+      close(0);
+      if (dup2(nextread, 0) == -1){
+        error();
+        return;
+      }
+      close(fd[0]);
+
+      if (dup2(fd[1], 1) == -1){
+        error();
+        return;
+      }
+      close(fd[1]);
+
+      if (execv(arguments[i][0], NULL) == -1){
+        error();
+        exit(1);
+      }
+    }
+
+    i++;
+  }
+
+  //creating the last child process
+  pid = fork();
+  if (pid == -1){
+    error();
+    return;
+  }
+
+  if (pid == 0){
+    close(0);
+    if (dup2(fd[0], 0) == -1){
+      error();
+      return;
+    }
+    close(fd[0]);
+    close(fd[1]);
+
+    if (execv(arguments[i][0], NULL) == -1){
+      error();
+      exit(1);
+    }
+  }
+  close(fd[0]);
+  close(fd[1]);
+
+  //Parent process waits for all of the other processes to finish
+  pid_t waitret;
+  int status = 0;
+  while ((waitret = wait(&status)) > 0);
 }
