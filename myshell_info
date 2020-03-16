@@ -1,0 +1,493 @@
+Brendan Lisowski
+CIS 3207
+Project 2 - myshell
+
+
+
+This document describes my solution to this project, including pseudocode
+and brief descriptions of testing methods (screenshots of testing will be
+provided in a separate document).
+
+
+General Overview
+
+  When starting myshell, the user can either choose to input a file of commands
+  (batchmode) to be executed, or type the commands directly to the shell.
+  myshell takes a line of commands, parses the line and loads a struct with the
+  information needed to execute the commands. There are two types of commands:
+  built-in and external. Built-in commands are hard coded into the shell while
+  external commands are executable files in the user's system.Once the command
+  line is parsed, the struct is then passed on to one of two handler functions
+  (built-in and external).
+
+  The built-in handler function checks the struct to see which command
+  needs to be executed and sends it to the appropriate function for that
+  command - with the exception of commands that can be executed with just a few
+  lines of code.
+
+  The external command handler function, the command struct is first checked
+  for the pipe operator. If the command line requires piping, it is sent to a
+  seperate function specifically for piping. The command (or commands in the
+  case of parallel execution) is sent to another function to find it's
+  filepath. Once a filepath is found, the shell then calls the fork() function
+  to make a child, and the child then calls the execv() function to run the
+  command.
+
+  Once a command line is processed, a new line is read. This process continues
+  until the user file reaches EOF or the quit command is read.
+
+
+Definitions
+
+  The built-in functions are defined as strings to make parsing easier.
+  These include:
+
+    CD = "cd"
+    CLR = "clr"
+    DR = "dir"
+    ENVIRON = "environ"
+    ECHO = "echo"
+    PATH = "path"
+    ECHO = "echo"
+    HELP = "help"
+    PAUSE = "pause"
+    QUIT = "quit"
+
+  A typedef struct called command is defined including several members. All
+  integers are initialized to 0.
+
+    int builtin       -Set to 1 if the command is built-in and -1 for an error
+    char args[50][50] -Holds the parsed command line
+    int argcount      -Holds the number of elements in the args array - 1
+    int out           -Output redirection operator (truncate). Set to the
+                       location of the file in the args array.
+    int out1          -Output redirection operator (append). Set to the
+                       location of the file in the args array.
+    int in            -Input redirection operator. Set to the location of the
+                       file in the args array
+    int pipe          -Holds the amount of pipe operators
+    int backexec      -Holds the amount of background/parallel execution
+                       operators
+
+Global variables
+
+  char path[50][50]   -Contains the path environment variable. When an external
+                       command is to be executed, the shell checks the
+                       directories stored in here. If there are no directories
+                       in here, only built-in commands can be executed.
+                       Initialized to contain "/bin".
+  int pathsize        -Holds the amount of directories in the path.
+  char pwd[100]       -This is the current working directory.
+  char shellpath[100] -This contains the filepath for the shell itself
+
+Functions
+
+
+  int main(int argc, int *argv[])
+
+    initialize path variable
+    getcwd() to initialize both pwd and shellpath variables
+
+    command cmd       //struct for the command lines
+    initstruct(&cmd)  //initializes the struct
+
+    int batchmode     //set to 1 if the user passed a file
+
+    if argc = 2
+      open file for batch mode
+      batchmode = 1
+
+    else if argc > 2
+      exit(1)
+
+    char *line is allocated   //to hold the command line to send to parser
+
+    while(1){
+
+      if batchmode
+        getline() from the file
+      else
+        getline() from stdin
+
+      if line != "\n"
+        parse(line, &cmd)
+
+        if cmd.builtin = -1
+          error()
+        else if cmd.builtin = 1
+          handlebuiltin(cmd)
+        else
+          handleother(cmd)
+
+      initstruct(&cmd)        //to clear the struct so it can be used again
+
+    }
+
+    //close the file pointer and free line
+--------------------------------------------------------------------------------
+
+  void error()
+    //no arguments
+    //prints and error message
+    //no return
+--------------------------------------------------------------------------------
+
+  void initstruct(command *cmd)
+    //cmd argument is the command struct passed from the main function
+    //initialize all integers to 0
+    //all elements in args are set to ""
+    //no return
+--------------------------------------------------------------------------------
+
+  void parse(char *line, command *cmd)
+    //line is the command line to be parsed
+    //cmd is the command struct
+
+    const char *delims = " \n\t"     //delimiters for the strtok Function
+    char *buffer = strtok(line, delims)
+
+    if buffer is NULL, return to main
+
+    //a series of if else statements comparing buffer to the built-in commands
+    if buffer = a built-in command
+      cmd.builtin = 1
+    else if buffer = QUIT
+      exit(0)
+    else cmd.builtin = 0
+
+    cmd.args[0] = buffer
+
+    //while loop to parse the rest of the command line
+    while (buffer = strtok())
+
+      //switch statement checks for operators and sets the struct variables
+        accordingly
+      //adds each token to cmd.args
+
+    free(buffer)
+    //no return
+
+
+  Testing:
+    To test the parsing function, I will make a list of a series of command
+    line entries and their expected output (struct variables). I will have the
+    The parsing function will print the struct variables and they will be
+    compared with the expected output. I will test this by both manual entry
+    and from a file with batchmode.
+--------------------------------------------------------------------------------
+
+    void handlebuiltin(command cmd)
+      //cmd is the command struct
+
+      //if else statements check the first element of cmd.args and sends it to
+        the appropriate function - with the exception of CLR and QUIT
+
+      if CLR
+        print "\033[H\033[J"
+
+      if QUIT
+        exit(0)
+
+      //no return
+
+    Testing:
+      To test this, I will add print statements indicating which function the
+      command will be sent to.
+--------------------------------------------------------------------------------
+
+    void cd(command cmd)
+      //cmd is the command struct
+
+      if cmd.argcount = 0
+        print pwd
+      else if chdir(cmd.args) = -1
+        error()
+      else
+        getcwd(pwd, 100)
+        print pwd
+
+      //no return
+
+    Testing:
+      A series of filepaths will be sent - some valid and some erroneous.
+      The function will print the pwd to show the outcome.
+--------------------------------------------------------------------------------
+
+    void dir(command cmd)
+      //cmd is the command struct
+
+      DIR *dir
+      struct dirent *read
+
+      //if no directory is specified, the current working directory is printed
+      if cmd.argcount = 0
+        dir = opendir(pwd)
+      if cmd.argcount = 1 and no output Redirection
+        dir = opendir(pwd)
+      else
+        dir = opendir(cmd.args[1])
+        if dir = NULL
+          error()
+          return
+
+      //if else statements for output redirection
+      //if there is output redirection the appropriate file is open and printed
+        to using fprintf
+      //printing happens in this while loop
+        while read != NULL
+          print read->d_name
+          read = readdir(dir)
+
+      closedir(dir)
+
+      //no return
+
+    Testing:
+      Similar to cd, a series of directories will be input and their output
+      will be compared. Output redirection will be tested.
+--------------------------------------------------------------------------------
+
+    void environ(command cmd)
+      //cmd is the command struct
+
+      if cmd.argcount > 1
+        error()
+        return
+
+      //output redirection is checked and a file pointer is opened if need be
+
+      print path
+      print shellpath
+      print pwd
+      print getenv("USER")
+      print getenv("HOME")
+
+      //no return
+
+    Testing:
+      Testing this will simply involve running the command. Output redirection
+      will be tested.
+--------------------------------------------------------------------------------
+
+    void changepath(command cmd)
+      //cmd is the command struct
+
+      if cmd.argcount = 0
+        path[0] = "\0"
+
+      while i = 1 < cmd.argcount
+        //a DIR pointer and opendir() are used to check if the directories
+          given are valid
+        path[i-1] = cmd.args[i]
+        pathsize++
+
+      //no return
+
+    Testing:
+      The command will be input with no arguments to verify that the path is
+      erased. Then the command will be input with a variety of filepaths - some
+      valid and some erroneous. The results will be printed.
+--------------------------------------------------------------------------------
+
+    void echo(command cmd)
+      //cmd is the command struct
+
+      //checks for output redirection
+      //prints cmd.args
+
+      //no return
+
+    Testing:
+      Inputs of various length will be entered and output redirection will be
+      tested.
+--------------------------------------------------------------------------------
+
+    void help(command cmd)
+      //cmd is the command struct
+
+      //checks for output redirection
+      //uses a loop and getline() to print the readme file
+
+      //no return
+--------------------------------------------------------------------------------
+
+    void pauseshell(command cmd)
+      //cmd is the command struct
+
+      print "press enter to continue"
+
+      //uses a loop and getchar() to look for the newline character
+      //exits the loop when a newline character is found with no
+      //characters before it
+
+      //no return
+
+--------------------------------------------------------------------------------
+
+    void handleother(command cmd)
+      //cmd is the command struct
+
+      //checks the path variable. if it contains no directories, only builtin
+      //commands can be used so this results in an error
+
+      if cmd.pipe > 0
+        handlepipe(cmd.args, cmd.argcount, cmd.pipe)
+        return
+
+      int i = 0
+      int index = 0
+      //backexecindex is used for the checkpath() function
+      int backexecindex = 0
+
+      //this loop is used in the case the user wants multiple commands run
+      //it is a do-while so it can only run once if there is only one command
+      do{
+
+        //cpath holds the filepath of the executable file
+        char *cpath = checkpath(cmd.args, backexecindex)
+        if cpath = NULL
+          error()
+          return
+
+        //a 2D char array is used to hold the the arguments needed by the
+        //child for the execv() function
+        char **arguments
+
+        i = 1
+        //this while loops places the arguments into the arguments array
+        //breaks if there are no arguments left or a background execution
+        //operator is reached (i.e. the next command)
+        while cmd.args[i] != "\0" && cmd.args != "&"{
+          arguments[i] = cmdargs[i]
+          i++
+        }
+
+        backexecindex = i + 1           //location of the next command
+
+        //creating a child process
+        pid_t pid = fork()
+
+        //child process code
+          //if there is redirection
+            int fd = open(cmd.args[file location], <appropriate arguments> )
+            dup2(fd, <either 1 or 0>)
+
+          if execv(cpath, arguments) == -1
+            error()
+            return
+
+        //parent process
+            if cmd.backexec == 0
+              wait(&pid)
+      } while (index <= cmd.backexec)
+
+
+      //no return
+
+    Testing:
+      I have made another program called "forktest". This prints off several
+      lines. In order to test background execution, the program calls the
+      sleep() function. Parallel execution will also be tested.
+--------------------------------------------------------------------------------
+
+    void handlepipe(char args[50][50], int argc, int n)
+      //args = cmd.args
+      //argc = cmd.argcount
+      //n = cmd.pipes
+
+      //in order to handle n pipes, I chose to use a 3D char array
+      //The memory is allocated to hold n+1 2D char arrays
+      char ***arguments
+
+      int index = 0     //used for the checkpath() function
+      char *cpath = checkpath(cmd.args, index)
+
+      arguments[0][0] = cpath
+
+      i = 1     //index for args
+      j = 0     //index for each executable command (arguments[j])
+      k = 1     //index for each executable commands arguments (arguments[j][k])
+
+      //loop to fill the arguments arrays.
+      while index <= argc
+        if args[i] = "|"
+          //if no command after a pipe operator, error and return
+          index = i + 1
+          char *cpath = checkpath(args, index)
+          //setting an executable
+          arguments[j+1][k] = cpath
+          i++
+          j++
+          k = 0
+        else
+          arguments[j][k] = args[i]
+          i++
+          k++
+        index++
+
+      i = 0
+      int nextread      //Saves fd[0] before a new pipe is made
+      pid_t pid
+      int fd[2]         //file desctiptor
+
+      //loop to create pipes and children
+      while i <= n
+        pipe(fd)
+
+        //child process code
+          if i !=0            //if this is not the first child
+            //connecting child to read end of a pipe
+            close(0)
+            dup2(nextread, 0)
+            close(fd[0])
+
+          if i != n           //if this is not the last child
+            dup2(fd[1], 1)
+            close(fd[1])
+
+          execv(arguments[i][0], arguments[i])
+
+        i++
+
+      //close parent's connection to the pipe
+      close(fd[0])
+      close(fd[1])
+
+      //parent waits for child processes to finish executing
+      pid_t waitret
+      int status = 0
+      while waitret = wait(&status) > 0
+
+      //no return
+
+    Testing:
+      To test piping, I have made 3 programs - pipetest, pipetest2 and
+      pipetest3. Pipetest prints a line. pipetest2 and pipetest3 use getline()
+      to get the output of the other programs.
+
+--------------------------------------------------------------------------------
+
+    //this function looks for the executable file
+    char * checkpath(char args[50][50], int index)
+      //args is cmd.args
+      //index is the location of the command in args
+
+      int i = 0;
+      int pathfound = 0;    //set to 1 if the path is found
+      while i < pathsize
+        //this loop copies path[i] to the buffer
+        //then buffer is appended with the command
+
+        if access(buffer, X_OK) == 0
+          return buffer
+        else
+          buffer = ""
+          i++;
+
+      //if the buffer is not found using the path, it will simply check
+      //the current working directory. if the file is not found, the function
+      //will return NULL, otherwise buffer will be returned.
+
+    Testing:
+      Testing this function will be done with the handleother() function. If an
+      invalid filepath is entered, handlother() will throw an error.

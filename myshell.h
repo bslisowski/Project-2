@@ -5,7 +5,6 @@
 #define ENVIRON "environ"
 #define ECHO "echo"
 #define PATH "path"
-#define ECHO "echo"
 #define HELP "help"
 #define PAUSE "pause"
 #define QUIT "quit"
@@ -15,6 +14,7 @@ char path[50][50];
 char pwd[100];
 char shellpath[100];
 int pathsize = 1;
+
 /*
   This struct holds the parsed command line.
   out, out1, in, and pipe:

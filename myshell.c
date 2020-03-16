@@ -1,7 +1,7 @@
 /*
   Brendan Lisowski
   CIS 3207 - Project 2
-  03/14/2020
+  03/16/2020
 */
 
 
@@ -14,7 +14,7 @@
 #include <sys/wait.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-#include "myshell.h"
+#include "myshelltest.h"
 
 int main(int argc, char *argv[]){
 
@@ -62,7 +62,6 @@ int main(int argc, char *argv[]){
       fflush(stdin);
       getline(&line, &size, stdin);
     }
-
     if (strcmp(line, "\n") != 0){
       parse(line, &cmd);
       //handle parsed command
@@ -146,7 +145,12 @@ void parse(char *line, command *cmd){
     cmd->builtin = 1;
   }
   else if (strcmp(buffer, QUIT) == 0){
-    exit(0);
+    if ((buffer = strtok(NULL, delims)) != NULL){
+      error();
+      return;
+    }
+    else
+      exit(0);
   }
   else{
     cmd->builtin = 0;
@@ -163,16 +167,19 @@ void parse(char *line, command *cmd){
     switch (buffer[0]){
       case '>':
         if (buffer[0] == '>'){
-          cmd->out1 = i;
-          if (buffer[1] != '\0'){
-            cmd->builtin = -1;
+          if (buffer[1] == '>'){
+            if(buffer[2] != '\0'){
+              cmd->builtin = -1;
+              return;
+            }
+            else
+              cmd->out1 = i;
           }
-        }
-        else{
-          cmd->out = i;
-          if (buffer[2] != '\0'){
+          else if (buffer[1] != '\0'){
             cmd->builtin = -1;
+            return;
           }
+          else cmd->out = i;
         }
         break;
       case '<':
@@ -224,7 +231,8 @@ void handlebuiltin(command cmd){
       error();
     }
     else{
-        cd(cmd);
+      cd(cmd);
+      return;
     }
   }
   else if (strcmp(cmd.args[0], CLR) == 0){
@@ -239,30 +247,27 @@ void handlebuiltin(command cmd){
   }
   else if (strcmp(cmd.args[0], DR) == 0){
     dir(cmd);
+    return;
   }
   else if (strcmp(cmd.args[0], ENVIRON) == 0){
     environ(cmd);
+    return;
   }
   else if (strcmp(cmd.args[0], PATH) == 0){
     changepath(cmd);
+    return;
   }
   else if (strcmp(cmd.args[0], ECHO) == 0){
     echo(cmd);
+    return;
   }
   else if (strcmp(cmd.args[0], HELP) == 0){
     help(cmd);
+    return;
   }
   else if (strcmp(cmd.args[0], PAUSE) == 0){
     pauseshell(cmd);
-  }
-  else if (strcmp(cmd.args[0], QUIT) == 0){
-    //exit is handled here - no seperate function needed
-    if (cmd.argcount > 0){
-      error();
-    }
-    else{
-      exit(0);
-    }
+    return;
   }
   else{
     error();
@@ -405,15 +410,15 @@ void environ(command cmd){
   function for user to change the path
 */
 void changepath(command cmd){
-  //if no arguments are passed, the path is set to NULL
+  //if no arguments are passed, path is set to NULL
   if (cmd.argcount == 0){
     strcpy(path[0], "\0");
     strcpy(path[1], "\0");
     return;
   }
-  printf("argcount = %d\n", cmd.argcount);
 
   int i = 1;
+  pathsize = 0;
   /*
     this loop uses opendir() to check if the arguments given are
     existing directories
@@ -437,7 +442,7 @@ void changepath(command cmd){
   can be used with output redirection
 */
 void echo(command cmd){
-  if (cmd.argcount == 0 || cmd.argcount > 2){
+  if (cmd.argcount == 0){
     error();
     return;
   }
@@ -455,11 +460,17 @@ void echo(command cmd){
       error();
       return;
     }
-    fprintf(fp, "%s\n", cmd.args[1]);
+    for (int i = 1; i <= cmd.argcount; i++)
+      fprintf(fp, "%s ", cmd.args[i]);
+
+    fprintf(fp, "\n");
     fclose(fp);
   }
   else {
-    printf("%s\n", cmd.args[1]);
+    for (int i = 1; i <= cmd.argcount; i++)
+      printf("%s ", cmd.args[i]);
+
+    printf("\n");
   }
 }
 
@@ -636,14 +647,9 @@ void handleother(command cmd){
         }
       }
       //calling the execv()
-      if (cmd.argcount){
-        if (execv(cpath, arguments) == -1)
-          error();
-      }
-      else{
-        if (execv(cpath, arguments) == -1)
-          error();
-      }
+      if (execv(cpath, arguments) == -1)
+        error();
+
       free(cpath);
       free(arguments);
       exit(1);
@@ -690,25 +696,35 @@ void handlepipe(char args[50][50], int argc, int n){
     j = 0;
   }
 
-  i = 0;
+  i = 1;
   j = 0;
-  int k = 0;
+  int k = 1;
   int index = 0;
+
   //This loop takes the string of commands and arguments and places them in the proper arrays
-  if (access(args[i], X_OK) != 0){
+  char *cpath = checkpath(args, index);
+  if (cpath == NULL){
     error();
     return;
   }
+  strncpy(arguments[0][0], cpath, 50);
+  free(cpath);
+
   while (index <= argc){
     if (strcmp("|", args[i]) == 0){
       if (strcmp("\0", args[i+1]) == 0){
         error();
         return;
       }
-      if (access(args[i+1], X_OK) != 0){
+      index = i + 1;
+      char *cpath = checkpath(args, index);
+      if (cpath == NULL){
         error();
         return;
       }
+      strcpy(arguments[j][k], "");
+      strncpy(arguments[j+1][0], cpath, 50);
+      free(cpath);
       i++;
       j++;
       k = 0;
@@ -722,7 +738,7 @@ void handlepipe(char args[50][50], int argc, int n){
   }
 
   i = 0;
-  int nextread;         //integer for the
+  int nextread;         //integer for the read end of the last pipe
   pid_t pid;
   int fd[2];
 
@@ -765,7 +781,7 @@ void handlepipe(char args[50][50], int argc, int n){
         exit(1);
       }
     }
-    printf("cmd = %s\n", arguments[i][0]);
+
     i++;
   }
 
@@ -784,17 +800,16 @@ void handlepipe(char args[50][50], int argc, int n){
   Function to check the path and current working directory for
   the executable file.
 */
-char * checkpath(char args[50][50], int backexecindex){
+char * checkpath(char args[50][50], int index){
 
   char *buffer = (char *)malloc(50*sizeof(char));
 
   int i = 0;
-  int pathfound = 0;
+
   while(i < pathsize){
     strcat(buffer, path[i]);
-    strcat(buffer, args[backexecindex]);
+    strcat(buffer, args[index]);
     if (access(buffer, X_OK) == 0){
-      pathfound = 1;
       return buffer;
     }
     else{
@@ -807,13 +822,12 @@ char * checkpath(char args[50][50], int backexecindex){
   If the command is not found in the path, this will check
   the current directory.
   */
-  if (!pathfound){
-    strncpy(buffer, "", 50);
-    strcat(buffer, args[backexecindex]);
+  strncpy(buffer, "", 50);
+  strcat(buffer, args[index]);
 
-    if(access(buffer, X_OK) != 0){
-      return NULL;
-    }
+  if(access(buffer, X_OK) != 0){
+    return NULL;
   }
+
   return buffer;
 }
